@@ -1,0 +1,46 @@
+# Python caches and local environment
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Generated real radar recordings
+dataset/**/*.csv
+!dataset/README.md
+!dataset/**/.gitkeep
+
+# Generated simulated recordings
+dataset_simulated/
+
+# Trained model artifacts
+models/*
+!models/.gitkeep
+
+# Generated reports, plots, and feature tables
+outputs/*
+!outputs/features/
+!outputs/features/.gitkeep
+!outputs/plots/
+!outputs/plots/.gitkeep
+!outputs/recordings/
+!outputs/recordings/.gitkeep
+
+# Generated circuit image from circuit_diagram.py
+correct_radar_circuit.png
