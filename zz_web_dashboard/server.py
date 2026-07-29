@@ -1,4 +1,4 @@
-"""Local web interface for the ML-based Doppler radar project.
+﻿"""Local web interface for the ML-based Doppler radar project.
 
 Run from the project root:
     python "zz_web_dashboard\\server.py"
@@ -41,6 +41,7 @@ LIVE_STATE: dict[str, object] = {
     "history": [],
     "started_at": None,
     "samples_seen": 0,
+    "last_ultrasonic": None,
 }
 
 for folder in ("DSP", "ML", "Simulation"):
@@ -49,7 +50,7 @@ for folder in ("DSP", "ML", "Simulation"):
         sys.path.insert(0, str(path))
 
 from compare_models import compare_supervised, compare_unsupervised, save_comparison_plots  # noqa: E402
-from feature_extraction import FEATURE_NAMES  # noqa: E402
+from feature_extraction import FEATURE_NAMES, estimate_motion_metrics, extract_features_from_filtered_signal  # noqa: E402
 from generate_synthetic_dataset import PROFILES, make_signal, write_recording  # noqa: E402
 from radar_dsp import (  # noqa: E402
     bandpass_filter,
@@ -173,10 +174,74 @@ def add_live_prediction(prediction: dict[str, object]) -> None:
         history.insert(0, prediction)
         LIVE_STATE["history"] = history[:20]
         LIVE_STATE["current"] = prediction
+        if any(key in prediction for key in ("distance_m", "ultrasonic_speed_mps", "motion", "presence")):
+            LIVE_STATE["last_ultrasonic"] = {
+                "distance_m": prediction.get("distance_m"),
+                "ultrasonic_speed_mps": prediction.get("ultrasonic_speed_mps"),
+                "motion": prediction.get("motion"),
+                "presence": prediction.get("presence"),
+            }
+
+
+def parse_serial_telemetry(line: str) -> dict[str, object] | None:
+    if "=" not in line:
+        return None
+    parsed: dict[str, object] = {"time": datetime.now().isoformat(timespec="seconds"), "source": "ESP32 telemetry"}
+    aliases = {
+        "object": "class",
+        "label": "class",
+        "confidence": "confidence",
+        "distance_m": "distance_m",
+        "speed_mps": "ultrasonic_speed_mps",
+        "ultrasonic_speed_mps": "ultrasonic_speed_mps",
+        "motion": "motion",
+        "presence": "presence",
+    }
+    for part in line.split(","):
+        if "=" not in part:
+            continue
+        key, value = [piece.strip() for piece in part.split("=", 1)]
+        target = aliases.get(key.lower())
+        if not target:
+            continue
+        if target in {"confidence", "distance_m", "ultrasonic_speed_mps"}:
+            try:
+                parsed[target] = float(value)
+            except ValueError:
+                continue
+        elif target == "presence":
+            parsed[target] = value.lower() in {"1", "true", "yes", "present"}
+        else:
+            parsed[target] = value
+    if "class" not in parsed and "distance_m" not in parsed:
+        return None
+    parsed.setdefault("presence", parsed.get("distance_m") is not None)
+    parsed.setdefault("motion", "Unknown")
+    return parsed
+
+
+def simulated_ultrasonic_snapshot(index: int, label: str) -> dict[str, object]:
+    phase = (index % 12) / 12.0
+    distance_m = 2.1 + 0.75 * np.sin(phase * 2 * np.pi)
+    next_distance_m = 2.1 + 0.75 * np.sin(((index + 1) % 12) / 12.0 * 2 * np.pi)
+    speed = abs(next_distance_m - distance_m) / 1.5
+    if abs(next_distance_m - distance_m) < 0.03:
+        motion = "Stationary"
+    elif next_distance_m < distance_m:
+        motion = "Approaching"
+    else:
+        motion = "Receding"
+    present = label.lower() != "background"
+    return {
+        "presence": present,
+        "distance_m": round(float(distance_m if present else 0.0), 3),
+        "ultrasonic_speed_mps": round(float(speed if present else 0.0), 3),
+        "motion": motion if present else "No object",
+    }
 
 
 def predict_adc_window(samples: list[int], bundle: dict[str, object], fs: float) -> dict[str, object]:
-    from feature_extraction import FEATURE_NAMES, extract_features_from_filtered_signal
+    from feature_extraction import extract_features_from_filtered_signal
     from radar_dsp import adc_to_voltage
 
     voltage = adc_to_voltage(np.asarray(samples, dtype=float))
@@ -186,13 +251,14 @@ def predict_adc_window(samples: list[int], bundle: dict[str, object], fs: float)
     model = bundle["model"]
     label = str(model.predict(frame)[0])
     confidence = float(np.max(model.predict_proba(frame))) if hasattr(model, "predict_proba") else 0.0
-    speed_mps = float(features[FEATURE_NAMES.index("speed_mps")])
+    motion = estimate_motion_metrics(filtered, fs=fs)
 
     return {
         "time": datetime.now().isoformat(timespec="seconds"),
         "class": label,
         "confidence": round(confidence, 3),
-        "speed_mps": round(speed_mps, 3),
+        "speed_mps": round(float(motion["radar_speed_mps"]), 3),
+        "motion": "ultrasonic-runtime",
     }
 
 
@@ -213,6 +279,10 @@ def run_serial_live(payload: dict[str, object], bundle: dict[str, object]) -> No
         set_live_state(status=f"Reading from {port}")
         while not LIVE_STOP_EVENT.is_set():
             line = ser.readline().decode(errors="ignore").strip()
+            telemetry = parse_serial_telemetry(line)
+            if telemetry:
+                add_live_prediction(telemetry)
+                continue
             if not line.isdigit():
                 continue
             samples.append(int(line))
@@ -246,6 +316,7 @@ def run_simulated_live(payload: dict[str, object], bundle: dict[str, object]) ->
         start = 0 if len(adc_samples) == window_size else int((index * 733) % (len(adc_samples) - window_size))
         window = adc_samples[start : start + window_size]
         prediction = predict_adc_window(window, bundle, fs)
+        prediction.update(simulated_ultrasonic_snapshot(index, str(recording["label"])))
         prediction["source"] = recording["path"]
         add_live_prediction(prediction)
         set_live_state(samples_seen=int(get_live_state().get("samples_seen", 0)) + len(window))
@@ -265,6 +336,7 @@ def live_worker(payload: dict[str, object]) -> None:
             history=[],
             started_at=datetime.now().isoformat(timespec="seconds"),
             samples_seen=0,
+            last_ultrasonic=None,
         )
         if mode == "simulated":
             run_simulated_live(payload, bundle)
@@ -434,6 +506,7 @@ def analyze_recording(payload: dict[str, object]) -> dict[str, object]:
         "stft_bins": int(len(stft_freqs)),
         "stft_frames": int(len(times)),
         "spectrogram_mean": round(float(np.mean(spectrogram)), 8),
+        "features": dict(zip(FEATURE_NAMES, [round(float(value), 6) for value in extract_features_from_filtered_signal(filtered, fs=fs)])),
     }
 
 
@@ -576,3 +649,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+

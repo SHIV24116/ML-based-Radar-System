@@ -1,3 +1,4 @@
+joblib
 matplotlib
 numpy
 pandas
@@ -5,3 +6,4 @@ pyserial
 scikit-learn
 scipy
 schemdraw
+tensorflow

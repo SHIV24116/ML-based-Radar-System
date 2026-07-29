@@ -12,3 +12,7 @@ void loop() {
   Serial.println(sample);
   delayMicroseconds(sampleDelayUs);
 }
+
+
+
+//this code is for data aquisition......to be uploaded to esp only during data collection

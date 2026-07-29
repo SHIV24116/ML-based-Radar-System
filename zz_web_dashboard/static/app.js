@@ -1,4 +1,4 @@
-const logEl = document.querySelector("#log");
+﻿const logEl = document.querySelector("#log");
 const supervisedRows = document.querySelector("#supervisedRows");
 const unsupervisedRows = document.querySelector("#unsupervisedRows");
 const liveRows = document.querySelector("#liveRows");
@@ -16,9 +16,7 @@ async function api(path, options = {}) {
     ...options,
   });
   const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || "Request failed");
-  }
+  if (!response.ok) throw new Error(data.error || "Request failed");
   return data;
 }
 
@@ -30,6 +28,22 @@ function setLoading(button, loading) {
 
 function totalFiles(counts) {
   return Object.values(counts || {}).reduce((sum, value) => sum + Number(value), 0);
+}
+
+function valueOrDash(value) {
+  return value === null || value === undefined || value === "" ? "-" : value;
+}
+
+function percent(value) {
+  return value === null || value === undefined ? "-" : `${Math.round(Number(value) * 100)}%`;
+}
+
+function meters(value) {
+  return value === null || value === undefined ? "-" : `${Number(value).toFixed(2)} m`;
+}
+
+function speed(value) {
+  return value === null || value === undefined ? "-" : `${Number(value).toFixed(3)} m/s`;
 }
 
 function renderRows(target, rows, columns) {
@@ -65,28 +79,75 @@ function renderPlots(plots = {}) {
   }
 }
 
-function renderLive(state) {
+function currentWithUltrasonicFallback(state) {
   const current = state.current || {};
+  const ultrasonic = state.last_ultrasonic || {};
+  return {
+    ...current,
+    distance_m: current.distance_m ?? ultrasonic.distance_m,
+    ultrasonic_speed_mps: current.ultrasonic_speed_mps ?? ultrasonic.ultrasonic_speed_mps,
+    motion: current.motion ?? ultrasonic.motion,
+    presence: current.presence ?? ultrasonic.presence,
+  };
+}
+
+function updatePresenceMap(current) {
+  const scope = document.querySelector("#radarScope");
+  const dot = document.querySelector("#objectDot");
+  const mapState = document.querySelector("#mapState");
+  const mapDetail = document.querySelector("#mapDetail");
+  const present = Boolean(current.presence) || Number(current.distance_m) > 0;
+  const distance = Number(current.distance_m || 0);
+  const maxDistance = 3.5;
+  const clamped = Math.max(0, Math.min(distance, maxDistance));
+  const radius = 48 + (clamped / maxDistance) * 88;
+  const motion = String(current.motion || "Unknown").toLowerCase();
+  const angle = motion.includes("approach") ? -90 : motion.includes("reced") ? 45 : -20;
+  const radians = (angle * Math.PI) / 180;
+  const x = Math.cos(radians) * radius;
+  const y = Math.sin(radians) * radius;
+
+  scope.classList.toggle("has-object", present);
+  scope.classList.toggle("no-object", !present);
+  dot.style.transform = present ? `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))` : "translate(-50%, -50%)";
+  mapState.textContent = present ? "Object present" : "No object";
+  mapDetail.textContent = present
+    ? `${meters(distance)} • ${valueOrDash(current.motion)}`
+    : "Waiting for ultrasonic confirmation";
+}
+
+function renderLive(state) {
+  const current = currentWithUltrasonicFallback(state);
+  const radarSpeed = current.radar_speed_mps ?? current.speed_mps;
   document.querySelector("#liveStatus").textContent = state.error || state.status || "Idle";
+  document.querySelector("#livePresence").textContent = current.presence === undefined ? "-" : current.presence ? "Present" : "No object";
   document.querySelector("#liveClass").textContent = current.class || "-";
-  document.querySelector("#liveConfidence").textContent =
-    current.confidence === undefined ? "-" : `${Math.round(Number(current.confidence) * 100)}%`;
-  document.querySelector("#liveSpeed").textContent =
-    current.speed_mps === undefined ? "-" : `${Number(current.speed_mps).toFixed(3)} m/s`;
+  document.querySelector("#liveConfidence").textContent = percent(current.confidence);
+  document.querySelector("#liveDistance").textContent = meters(current.distance_m);
+  document.querySelector("#liveUltrasonicSpeed").textContent = speed(current.ultrasonic_speed_mps);
+  document.querySelector("#liveRadarSpeed").textContent = speed(radarSpeed);
+  document.querySelector("#liveMotion").textContent = valueOrDash(current.motion);
+  document.querySelector("#liveSamples").textContent = String(state.samples_seen || 0);
+  updatePresenceMap(current);
 
   liveRows.innerHTML = "";
   const history = state.history || [];
   if (history.length === 0) {
-    liveRows.innerHTML = `<tr><td colspan="5">No live predictions yet</td></tr>`;
+    liveRows.innerHTML = `<tr><td colspan="9">No live results yet</td></tr>`;
     return;
   }
   for (const item of history) {
     const tr = document.createElement("tr");
+    const itemRadarSpeed = item.radar_speed_mps ?? item.speed_mps;
     tr.innerHTML = `
       <td>${item.time || "-"}</td>
+      <td>${item.presence === undefined ? "-" : item.presence ? "Present" : "No object"}</td>
       <td>${item.class || "-"}</td>
-      <td>${item.confidence === undefined ? "-" : `${Math.round(Number(item.confidence) * 100)}%`}</td>
-      <td>${item.speed_mps === undefined ? "-" : `${Number(item.speed_mps).toFixed(3)} m/s`}</td>
+      <td>${percent(item.confidence)}</td>
+      <td>${meters(item.distance_m)}</td>
+      <td>${speed(item.ultrasonic_speed_mps)}</td>
+      <td>${speed(itemRadarSpeed)}</td>
+      <td>${valueOrDash(item.motion)}</td>
       <td>${item.source || item.mode || "-"}</td>
     `;
     liveRows.appendChild(tr);
@@ -123,9 +184,7 @@ async function refreshLiveStatus() {
 
 function ensureLivePolling() {
   if (livePollTimer) return;
-  livePollTimer = setInterval(() => {
-    refreshLiveStatus().catch((error) => log(error.message));
-  }, 1000);
+  livePollTimer = setInterval(() => refreshLiveStatus().catch((error) => log(error.message)), 1000);
 }
 
 async function loadResults() {
@@ -154,9 +213,7 @@ async function loadRecordings() {
   }
 }
 
-document.querySelector("#refreshStatus").addEventListener("click", () => {
-  refreshStatus().catch((error) => log(error.message));
-});
+document.querySelector("#refreshStatus").addEventListener("click", () => refreshStatus().catch((error) => log(error.message)));
 
 document.querySelector("#simulateBtn").addEventListener("click", async (event) => {
   const button = event.currentTarget;
@@ -204,9 +261,7 @@ document.querySelector("#compareBtn").addEventListener("click", async (event) =>
   }
 });
 
-document.querySelector("#recordingDataset").addEventListener("change", () => {
-  loadRecordings().catch((error) => log(error.message));
-});
+document.querySelector("#recordingDataset").addEventListener("change", () => loadRecordings().catch((error) => log(error.message)));
 
 document.querySelector("#analyzeBtn").addEventListener("click", async (event) => {
   const button = event.currentTarget;
@@ -214,12 +269,9 @@ document.querySelector("#analyzeBtn").addEventListener("click", async (event) =>
   if (!path) return;
   setLoading(button, true);
   try {
-    const data = await api("/api/analyze", {
-      method: "POST",
-      body: JSON.stringify({ path }),
-    });
+    const data = await api("/api/analyze", { method: "POST", body: JSON.stringify({ path }) });
     document.querySelector("#analysisOutput").textContent = JSON.stringify(data, null, 2);
-    log("Recording analyzed", data);
+    log("Recording analyzed", { path: data.path, dominant_hz: data.dominant_hz, speed_mps: data.speed_mps });
   } catch (error) {
     log(error.message);
   } finally {
@@ -254,10 +306,7 @@ document.querySelector("#stopLiveBtn").addEventListener("click", async (event) =
   const button = event.currentTarget;
   setLoading(button, true);
   try {
-    const state = await api("/api/live/stop", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
+    const state = await api("/api/live/stop", { method: "POST", body: JSON.stringify({}) });
     renderLive(state);
     log("Live detection stopped");
   } catch (error) {

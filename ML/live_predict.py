@@ -1,4 +1,4 @@
-"""Run real-time radar classification from the ESP32 serial stream."""
+﻿"""Run real-time radar classification from the ESP32 serial stream."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ for path in (ML_DIR, DSP_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from feature_extraction import FEATURE_NAMES, extract_features_from_filtered_signal  # noqa: E402
+from feature_extraction import extract_features_from_filtered_signal, estimate_motion_metrics  # noqa: E402
 from radar_dsp import (  # noqa: E402
     adc_to_voltage,
     bandpass_filter,
@@ -27,7 +27,7 @@ from radar_dsp import (  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Live radar SVM prediction demo.")
+    parser = argparse.ArgumentParser(description="Live radar ML prediction demo.")
     parser.add_argument("--port", default="COM5", help="Serial port used by ESP32.")
     parser.add_argument("--baud", type=int, default=115200, help="Serial baud rate.")
     parser.add_argument("--model", default="models/best_supervised_model.pkl", help="Trained model path.")
@@ -40,13 +40,13 @@ def predict_window(samples: list[int], bundle: dict, fs: float) -> tuple[str, fl
     voltage = adc_to_voltage(np.asarray(samples, dtype=float))
     filtered = bandpass_filter(voltage, fs=fs)
     features = extract_features_from_filtered_signal(filtered, fs=fs)
-    speed_mps = features[FEATURE_NAMES.index("speed_mps")]
+    motion = estimate_motion_metrics(filtered, fs=fs)
 
     frame = pd.DataFrame([features], columns=bundle["feature_names"])
     model = bundle["model"]
     label = str(model.predict(frame)[0])
     confidence = float(np.max(model.predict_proba(frame))) if hasattr(model, "predict_proba") else 0.0
-    return label, confidence, speed_mps
+    return label, confidence, float(motion["radar_speed_mps"])
 
 
 def main() -> None:
@@ -57,7 +57,8 @@ def main() -> None:
     window_size = int(args.fs * args.window_seconds)
 
     print(f"Loaded model: {model_path}")
-    print("Distance and direction are future extensions for this hardware setup.")
+    print("ML inputs are radar-only features.")
+    print("Distance and motion direction are provided by the final ESP32 ultrasonic runtime.")
     print("Collecting live windows. Press Ctrl+C to stop.")
 
     samples: list[int] = []
@@ -74,7 +75,7 @@ def main() -> None:
                 label, confidence, speed_mps = predict_window(samples[-window_size:], bundle, args.fs)
                 print(
                     f"class={label} confidence={confidence:.2f} "
-                    f"speed_magnitude={speed_mps:.2f} m/s"
+                    f"radar_speed_magnitude={speed_mps:.2f} m/s"
                 )
                 samples = samples[-window_size // 2 :]
 

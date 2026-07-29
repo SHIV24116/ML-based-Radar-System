@@ -1,27 +1,27 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Radar ML Control Panel</title>
+    <title>Radar Object Detection Dashboard</title>
     <link rel="stylesheet" href="/static/styles.css">
   </head>
   <body>
     <aside class="sidebar">
       <div>
         <p class="eyebrow">PR Project</p>
-        <h1>Radar ML Control Panel</h1>
+        <h1>Radar Object Detection</h1>
       </div>
       <nav>
         <a href="#overview">Overview</a>
+        <a href="#live">Live Detection</a>
         <a href="#simulate">Simulation</a>
         <a href="#compare">Models & Plots</a>
-        <a href="#live">Live Detection</a>
-        <a href="#analyze">Signal Analysis</a>
+        <a href="#analyze">Signal & Features</a>
         <a href="#record">Data Collection</a>
         <a href="#activity">Activity Log</a>
       </nav>
-      <p class="note">Distance and direction remain future extensions for this hardware setup.</p>
+      <p class="note">Final flow: radar-only ML classification, ultrasonic presence verification, OLED-style distance, speed, and direction output.</p>
     </aside>
 
     <main>
@@ -29,36 +29,91 @@
         <div class="section-title">
           <div>
             <p class="eyebrow">System Status</p>
-            <h2>Software Pipeline</h2>
+            <h2>Connected Project Pipeline</h2>
           </div>
           <button id="refreshStatus" class="secondary">Refresh</button>
         </div>
         <div class="metrics">
+          <div><span>Environment</span><strong id="envStatus">Checking</strong></div>
+          <div><span>Best Model</span><strong id="modelStatus">Checking</strong></div>
+          <div><span>Real Dataset</span><strong id="realCount">0 files</strong></div>
+          <div><span>Simulated Dataset</span><strong id="simCount">0 files</strong></div>
+        </div>
+      </section>
+
+      <section id="live" class="band live-band">
+        <div class="section-title">
           <div>
-            <span>Environment</span>
-            <strong id="envStatus">Checking</strong>
+            <p class="eyebrow">Final Demo</p>
+            <h2>Live Detection With Ultrasonic Presence Map</h2>
           </div>
-          <div>
-            <span>Best Model</span>
-            <strong id="modelStatus">Checking</strong>
-          </div>
-          <div>
-            <span>Real Dataset</span>
-            <strong id="realCount">0 files</strong>
-          </div>
-          <div>
-            <span>Simulated Dataset</span>
-            <strong id="simCount">0 files</strong>
+          <div class="button-row">
+            <button id="startLiveBtn">Start Live</button>
+            <button id="stopLiveBtn" class="secondary">Stop</button>
           </div>
         </div>
+        <div class="form-grid">
+          <label>Mode
+            <select id="liveMode">
+              <option value="simulated">Simulated playback</option>
+              <option value="serial">ESP32 serial / final telemetry</option>
+            </select>
+          </label>
+          <label>Serial port <input id="livePort" value="COM5"></label>
+          <label>Window seconds <input id="liveWindow" type="number" min="1" step="0.5" value="3"></label>
+          <label>Playback dataset
+            <select id="liveDataset">
+              <option value="dataset_simulated">dataset_simulated</option>
+              <option value="dataset">dataset</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="live-console">
+          <div class="radar-map-panel">
+            <div class="radar-scope" id="radarScope" aria-label="Circular live object presence map">
+              <div class="range-ring ring-1"></div>
+              <div class="range-ring ring-2"></div>
+              <div class="range-ring ring-3"></div>
+              <div class="range-line horizontal"></div>
+              <div class="range-line vertical"></div>
+              <div class="sweep"></div>
+              <div class="object-dot" id="objectDot"></div>
+              <div class="scope-center"></div>
+              <span class="range-label near">0 m</span>
+              <span class="range-label far">3.5 m</span>
+            </div>
+            <div class="map-caption">
+              <strong id="mapState">No object</strong>
+              <span id="mapDetail">Waiting for ultrasonic confirmation</span>
+            </div>
+          </div>
+
+          <div class="live-readout">
+            <div class="live-grid">
+              <div class="live-current"><span>Status</span><strong id="liveStatus">Idle</strong></div>
+              <div class="live-current"><span>Presence</span><strong id="livePresence">-</strong></div>
+              <div class="live-current"><span>Detected Class</span><strong id="liveClass">-</strong></div>
+              <div class="live-current"><span>Confidence</span><strong id="liveConfidence">-</strong></div>
+              <div class="live-current"><span>Distance</span><strong id="liveDistance">-</strong></div>
+              <div class="live-current"><span>Ultrasonic Speed</span><strong id="liveUltrasonicSpeed">-</strong></div>
+              <div class="live-current"><span>Radar Speed</span><strong id="liveRadarSpeed">-</strong></div>
+              <div class="live-current"><span>Motion</span><strong id="liveMotion">-</strong></div>
+              <div class="live-current"><span>Samples Seen</span><strong id="liveSamples">0</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <h3>Recent Live Results</h3>
+        <table>
+          <thead><tr><th>Time</th><th>Presence</th><th>Class</th><th>Confidence</th><th>Distance</th><th>Ultrasonic Speed</th><th>Radar Speed</th><th>Motion</th><th>Source</th></tr></thead>
+          <tbody id="liveRows"></tbody>
+        </table>
       </section>
 
       <section id="simulate" class="band">
         <div class="section-title">
-          <div>
-            <p class="eyebrow">Offline Data</p>
-            <h2>Generate Simulated Recordings</h2>
-          </div>
+          <div><p class="eyebrow">Offline Data</p><h2>Generate Simulated Recordings</h2></div>
           <button id="simulateBtn">Generate</button>
         </div>
         <div class="form-grid">
@@ -71,137 +126,50 @@
 
       <section id="compare" class="band">
         <div class="section-title">
-          <div>
-            <p class="eyebrow">Model Selection</p>
-            <h2>Compare Supervised and Unsupervised Models</h2>
-          </div>
+          <div><p class="eyebrow">Model Selection</p><h2>Compare Supervised and Unsupervised Models</h2></div>
           <button id="compareBtn">Run Comparison</button>
         </div>
         <div class="form-grid compact">
           <label>Dataset
-            <select id="compareDataset">
-              <option value="dataset_simulated">dataset_simulated</option>
-              <option value="dataset">dataset</option>
-            </select>
+            <select id="compareDataset"><option value="dataset_simulated">dataset_simulated</option><option value="dataset">dataset</option></select>
           </label>
           <label>Test size <input id="testSize" type="number" min="0.1" max="0.5" step="0.05" value="0.25"></label>
         </div>
         <div class="tables">
           <div>
             <h3>Supervised</h3>
-            <table>
-              <thead><tr><th>Model</th><th>CV Acc.</th><th>Test Acc.</th><th>Macro F1</th></tr></thead>
-              <tbody id="supervisedRows"></tbody>
-            </table>
+            <table><thead><tr><th>Model</th><th>CV Acc.</th><th>Test Acc.</th><th>Macro F1</th></tr></thead><tbody id="supervisedRows"></tbody></table>
           </div>
           <div>
             <h3>Unsupervised</h3>
-            <table>
-              <thead><tr><th>Model</th><th>ARI</th><th>NMI</th><th>Clusters</th></tr></thead>
-              <tbody id="unsupervisedRows"></tbody>
-            </table>
+            <table><thead><tr><th>Model</th><th>ARI</th><th>NMI</th><th>Clusters</th></tr></thead><tbody id="unsupervisedRows"></tbody></table>
           </div>
         </div>
         <div class="plot-grid" id="plotGrid">
-          <figure>
-            <img id="accuracyPlot" alt="Supervised model test accuracy plot">
-            <figcaption>Supervised model accuracy</figcaption>
-          </figure>
-          <figure>
-            <img id="f1Plot" alt="Supervised model macro F1 plot">
-            <figcaption>Supervised macro F1</figcaption>
-          </figure>
-          <figure>
-            <img id="unsupervisedPlot" alt="Unsupervised clustering ARI plot">
-            <figcaption>Unsupervised clustering quality</figcaption>
-          </figure>
-          <figure>
-            <img id="confusionPlot" alt="Best model confusion matrix">
-            <figcaption>Best model confusion matrix</figcaption>
-          </figure>
+          <figure><img id="accuracyPlot" alt="Supervised model test accuracy plot"><figcaption>Supervised model accuracy</figcaption></figure>
+          <figure><img id="f1Plot" alt="Supervised model macro F1 plot"><figcaption>Supervised macro F1</figcaption></figure>
+          <figure><img id="unsupervisedPlot" alt="Unsupervised clustering ARI plot"><figcaption>Unsupervised clustering quality</figcaption></figure>
+          <figure><img id="confusionPlot" alt="Best model confusion matrix"><figcaption>Best model confusion matrix</figcaption></figure>
         </div>
       </section>
 
       <section id="analyze" class="band">
         <div class="section-title">
-          <div>
-            <p class="eyebrow">DSP Check</p>
-            <h2>Analyze One Recording</h2>
-          </div>
+          <div><p class="eyebrow">DSP Check</p><h2>Analyze Radar Signal And ML Features</h2></div>
           <button id="analyzeBtn">Analyze</button>
         </div>
         <div class="form-grid compact">
           <label>Dataset
-            <select id="recordingDataset">
-              <option value="dataset_simulated">dataset_simulated</option>
-              <option value="dataset">dataset</option>
-            </select>
+            <select id="recordingDataset"><option value="dataset_simulated">dataset_simulated</option><option value="dataset">dataset</option></select>
           </label>
-          <label>Recording
-            <select id="recordingSelect"></select>
-          </label>
+          <label>Recording <select id="recordingSelect"></select></label>
         </div>
-        <pre id="analysisOutput" class="output">Select a recording to inspect dominant Doppler frequency and speed magnitude.</pre>
-      </section>
-
-      <section id="live" class="band">
-        <div class="section-title">
-          <div>
-            <p class="eyebrow">Final Demo</p>
-            <h2>Live Detection</h2>
-          </div>
-          <div class="button-row">
-            <button id="startLiveBtn">Start Live</button>
-            <button id="stopLiveBtn" class="secondary">Stop</button>
-          </div>
-        </div>
-        <div class="form-grid">
-          <label>Mode
-            <select id="liveMode">
-              <option value="simulated">Simulated playback</option>
-              <option value="serial">ESP32 serial</option>
-            </select>
-          </label>
-          <label>Serial port <input id="livePort" value="COM5"></label>
-          <label>Window seconds <input id="liveWindow" type="number" min="1" step="0.5" value="3"></label>
-          <label>Playback dataset
-            <select id="liveDataset">
-              <option value="dataset_simulated">dataset_simulated</option>
-              <option value="dataset">dataset</option>
-            </select>
-          </label>
-        </div>
-        <div class="live-grid">
-          <div class="live-current">
-            <span>Status</span>
-            <strong id="liveStatus">Idle</strong>
-          </div>
-          <div class="live-current">
-            <span>Detected Class</span>
-            <strong id="liveClass">-</strong>
-          </div>
-          <div class="live-current">
-            <span>Confidence</span>
-            <strong id="liveConfidence">-</strong>
-          </div>
-          <div class="live-current">
-            <span>Speed Magnitude</span>
-            <strong id="liveSpeed">-</strong>
-          </div>
-        </div>
-        <h3>Recent Predictions</h3>
-        <table>
-          <thead><tr><th>Time</th><th>Class</th><th>Confidence</th><th>Speed</th><th>Source</th></tr></thead>
-          <tbody id="liveRows"></tbody>
-        </table>
+        <pre id="analysisOutput" class="output">Select a recording to inspect Doppler metrics and radar-only ML features.</pre>
       </section>
 
       <section id="record" class="band">
         <div class="section-title">
-          <div>
-            <p class="eyebrow">Real Hardware</p>
-            <h2>Record From ESP32 Serial</h2>
-          </div>
+          <div><p class="eyebrow">Real Hardware</p><h2>Record Raw Radar ADC From ESP32 Serial</h2></div>
           <button id="recordBtn" class="secondary">Record</button>
         </div>
         <div class="form-grid">
@@ -214,10 +182,7 @@
 
       <section id="activity" class="band">
         <div class="section-title">
-          <div>
-            <p class="eyebrow">Activity</p>
-            <h2>Backend Log</h2>
-          </div>
+          <div><p class="eyebrow">Activity</p><h2>Backend Log</h2></div>
           <button id="clearLog" class="secondary">Clear</button>
         </div>
         <pre id="log" class="output">Ready.</pre>
