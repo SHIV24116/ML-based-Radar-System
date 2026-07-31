@@ -25,7 +25,7 @@ void Ultrasonic::update() {
       Config::ULTRASONIC_ECHO_PIN,
       HIGH,
       Config::ULTRASONIC_TIMEOUT_US);
-
+   
   previousDistanceM_ = distanceM_;
   const float dt = max((now - lastUpdateMs_) / 1000.0f, 0.001f);
   lastUpdateMs_ = now;

@@ -15,7 +15,7 @@ from pathlib import Path
 import serial
 
 
-ADC_MAX = 4095
+ADC_MAX = 4095b  
 ADC_VREF = 3.3
 
 
