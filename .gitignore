@@ -1,4 +1,4 @@
-# Python caches and local environment
+﻿# Python caches and local environment
 __pycache__/
 *.py[cod]
 *.pyo
@@ -29,6 +29,9 @@ dataset/**/*.csv
 # Generated simulated recordings
 dataset_simulated/
 
+# Unrelated local experiment folder
+111ULTRASONIC/
+
 # Trained model artifacts
 models/*
 !models/.gitkeep
@@ -36,10 +39,13 @@ models/*
 # Generated reports, plots, and feature tables
 outputs/*
 !outputs/features/
+outputs/features/*
 !outputs/features/.gitkeep
 !outputs/plots/
+outputs/plots/*
 !outputs/plots/.gitkeep
 !outputs/recordings/
+outputs/recordings/*
 !outputs/recordings/.gitkeep
 
 # Generated circuit image from circuit_diagram.py

@@ -27,9 +27,14 @@ def load_recording(path: str | Path) -> np.ndarray:
     try:
         frame = pd.read_csv(path)
         if "voltage" in frame.columns:
-            return frame["voltage"].to_numpy(dtype=float)
+            voltage = frame["voltage"].dropna().to_numpy(dtype=float)
+            if len(voltage) > 0:
+                return voltage
         if "adc" in frame.columns:
-            return adc_to_voltage(frame["adc"].to_numpy(dtype=float))
+            adc = pd.to_numeric(frame["adc"], errors="coerce").dropna()
+            adc = adc[adc >= 0]
+            if len(adc) > 0:
+                return adc_to_voltage(adc.to_numpy(dtype=float))
     except pd.errors.EmptyDataError:
         raise ValueError(f"Recording is empty: {path}") from None
 

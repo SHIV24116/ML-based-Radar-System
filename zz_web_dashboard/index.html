@@ -48,17 +48,12 @@
             <h2>Live Detection With Ultrasonic Presence Map</h2>
           </div>
           <div class="button-row">
-            <button id="startLiveBtn">Start Live</button>
+            <button id="startSimLiveBtn">Simulated Playback</button>
+            <button id="startSerialLiveBtn">Live Data Detection</button>
             <button id="stopLiveBtn" class="secondary">Stop</button>
           </div>
         </div>
         <div class="form-grid">
-          <label>Mode
-            <select id="liveMode">
-              <option value="simulated">Simulated playback</option>
-              <option value="serial">ESP32 serial / final telemetry</option>
-            </select>
-          </label>
           <label>Serial port <input id="livePort" value="COM5"></label>
           <label>Window seconds <input id="liveWindow" type="number" min="1" step="0.5" value="3"></label>
           <label>Playback dataset
@@ -98,15 +93,28 @@
               <div class="live-current"><span>Distance</span><strong id="liveDistance">-</strong></div>
               <div class="live-current"><span>Ultrasonic Speed</span><strong id="liveUltrasonicSpeed">-</strong></div>
               <div class="live-current"><span>Radar Speed</span><strong id="liveRadarSpeed">-</strong></div>
-              <div class="live-current"><span>Motion</span><strong id="liveMotion">-</strong></div>
+              <div class="live-current"><span>Direction</span><strong id="liveDirection">-</strong></div>
+              <div class="live-current"><span>Motion Type</span><strong id="liveMotionType">-</strong></div>
+              <div class="live-current"><span>Dominant Doppler</span><strong id="liveDoppler">-</strong></div>
               <div class="live-current"><span>Samples Seen</span><strong id="liveSamples">0</strong></div>
             </div>
           </div>
         </div>
 
+        <div class="live-graphs">
+          <figure>
+            <canvas id="motionGraph" width="640" height="240" aria-label="Realtime motion signature graph"></canvas>
+            <figcaption>Realtime motion signature</figcaption>
+          </figure>
+          <figure>
+            <canvas id="fftGraph" width="640" height="240" aria-label="Realtime FFT graph"></canvas>
+            <figcaption>FFT spectrum</figcaption>
+          </figure>
+        </div>
+
         <h3>Recent Live Results</h3>
         <table>
-          <thead><tr><th>Time</th><th>Presence</th><th>Class</th><th>Confidence</th><th>Distance</th><th>Ultrasonic Speed</th><th>Radar Speed</th><th>Motion</th><th>Source</th></tr></thead>
+          <thead><tr><th>Time</th><th>Presence</th><th>Class</th><th>Confidence</th><th>Distance</th><th>Ultrasonic Speed</th><th>Radar Speed</th><th>Direction</th><th>Motion Type</th><th>Source</th></tr></thead>
           <tbody id="liveRows"></tbody>
         </table>
       </section>
@@ -175,7 +183,7 @@
         <div class="form-grid">
           <label>Port <input id="serialPort" value="COM5"></label>
           <label>Label <input id="recordLabel" value="human"></label>
-          <label>Seconds <input id="recordSeconds" type="number" min="1" value="10"></label>
+          <label>Seconds <input id="recordSeconds" type="number" min="1" value="20"></label>
           <label>Output folder <input id="recordOut" value="dataset"></label>
         </div>
       </section>

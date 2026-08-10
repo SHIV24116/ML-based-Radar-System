@@ -46,10 +46,58 @@ function speed(value) {
   return value === null || value === undefined ? "-" : `${Number(value).toFixed(3)} m/s`;
 }
 
-function renderRows(target, rows, columns) {
+function hertz(value) {
+  return value === null || value === undefined ? "-" : `${Number(value).toFixed(1)} Hz`;
+}
+
+function drawLineGraph(canvasId, values, options = {}) {
+  const canvas = document.querySelector(`#${canvasId}`);
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const pad = 28;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = "#d9dee7";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i += 1) {
+    const y = pad + ((height - pad * 2) * i) / 4;
+    ctx.beginPath();
+    ctx.moveTo(pad, y);
+    ctx.lineTo(width - pad, y);
+    ctx.stroke();
+  }
+  if (!values || values.length < 2) {
+    ctx.fillStyle = "#617084";
+    ctx.fillText("Waiting for signal", pad, height / 2);
+    return;
+  }
+  const numeric = values.map(Number).filter((value) => Number.isFinite(value));
+  const min = Math.min(...numeric);
+  const max = Math.max(...numeric);
+  const span = max - min || 1;
+  ctx.strokeStyle = options.color || "#0f766e";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  numeric.forEach((value, index) => {
+    const x = pad + ((width - pad * 2) * index) / (numeric.length - 1);
+    const y = height - pad - ((value - min) / span) * (height - pad * 2);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+function drawFftGraph(canvasId, fft) {
+  const magnitudes = fft?.magnitude || [];
+  drawLineGraph(canvasId, magnitudes, { color: "#2563eb" });
+}
+
+function renderRows(target, rows, columns, emptyText = "No results yet") {
   target.innerHTML = "";
   if (!rows || rows.length === 0) {
-    target.innerHTML = `<tr><td colspan="${columns.length}">No results yet</td></tr>`;
+    target.innerHTML = `<tr><td colspan="${columns.length}">${emptyText}</td></tr>`;
     return;
   }
   for (const row of rows) {
@@ -87,6 +135,7 @@ function currentWithUltrasonicFallback(state) {
     distance_m: current.distance_m ?? ultrasonic.distance_m,
     ultrasonic_speed_mps: current.ultrasonic_speed_mps ?? ultrasonic.ultrasonic_speed_mps,
     motion: current.motion ?? ultrasonic.motion,
+    direction: current.direction ?? current.motion ?? ultrasonic.motion,
     presence: current.presence ?? ultrasonic.presence,
   };
 }
@@ -126,14 +175,18 @@ function renderLive(state) {
   document.querySelector("#liveDistance").textContent = meters(current.distance_m);
   document.querySelector("#liveUltrasonicSpeed").textContent = speed(current.ultrasonic_speed_mps);
   document.querySelector("#liveRadarSpeed").textContent = speed(radarSpeed);
-  document.querySelector("#liveMotion").textContent = valueOrDash(current.motion);
+  document.querySelector("#liveDirection").textContent = valueOrDash(current.direction || current.motion);
+  document.querySelector("#liveMotionType").textContent = valueOrDash(current.motion_type);
+  document.querySelector("#liveDoppler").textContent = hertz(current.dominant_hz);
   document.querySelector("#liveSamples").textContent = String(state.samples_seen || 0);
+  drawLineGraph("motionGraph", current.motion_signature || []);
+  drawFftGraph("fftGraph", current.fft);
   updatePresenceMap(current);
 
   liveRows.innerHTML = "";
   const history = state.history || [];
   if (history.length === 0) {
-    liveRows.innerHTML = `<tr><td colspan="9">No live results yet</td></tr>`;
+    liveRows.innerHTML = `<tr><td colspan="10">No live results yet</td></tr>`;
     return;
   }
   for (const item of history) {
@@ -147,7 +200,8 @@ function renderLive(state) {
       <td>${meters(item.distance_m)}</td>
       <td>${speed(item.ultrasonic_speed_mps)}</td>
       <td>${speed(itemRadarSpeed)}</td>
-      <td>${valueOrDash(item.motion)}</td>
+      <td>${valueOrDash(item.direction || item.motion)}</td>
+      <td>${valueOrDash(item.motion_type)}</td>
       <td>${item.source || item.mode || "-"}</td>
     `;
     liveRows.appendChild(tr);
@@ -249,9 +303,16 @@ document.querySelector("#compareBtn").addEventListener("click", async (event) =>
         test_size: Number(document.querySelector("#testSize").value),
       }),
     });
+    if (data.available === false) {
+      renderRows(supervisedRows, [], ["model", "cv_accuracy_mean", "test_accuracy", "macro_f1"], data.message || "Data not available");
+      renderRows(unsupervisedRows, [], ["model", "adjusted_rand", "normalized_mutual_info", "clusters_found"], data.message || "Data not available");
+      log(data.message || "Data not available", { dataset: data.dataset });
+      return;
+    }
     renderRows(supervisedRows, data.supervised, ["model", "cv_accuracy_mean", "test_accuracy", "macro_f1"]);
     renderRows(unsupervisedRows, data.unsupervised, ["model", "adjusted_rand", "normalized_mutual_info", "clusters_found"]);
     renderPlots(data.plots || {});
+    document.querySelector("#modelStatus").textContent = data.model?.model_name || data.summary?.best_supervised_model || "No model";
     log("Model comparison complete", data.summary);
     await refreshStatus();
   } catch (error) {
@@ -279,14 +340,13 @@ document.querySelector("#analyzeBtn").addEventListener("click", async (event) =>
   }
 });
 
-document.querySelector("#startLiveBtn").addEventListener("click", async (event) => {
-  const button = event.currentTarget;
+async function startLive(mode, button) {
   setLoading(button, true);
   try {
     const state = await api("/api/live/start", {
       method: "POST",
       body: JSON.stringify({
-        mode: document.querySelector("#liveMode").value,
+        mode,
         port: document.querySelector("#livePort").value,
         dataset: document.querySelector("#liveDataset").value,
         window_seconds: Number(document.querySelector("#liveWindow").value),
@@ -300,6 +360,14 @@ document.querySelector("#startLiveBtn").addEventListener("click", async (event) 
   } finally {
     setLoading(button, false);
   }
+}
+
+document.querySelector("#startSimLiveBtn").addEventListener("click", (event) => {
+  startLive("simulated", event.currentTarget);
+});
+
+document.querySelector("#startSerialLiveBtn").addEventListener("click", (event) => {
+  startLive("serial", event.currentTarget);
 });
 
 document.querySelector("#stopLiveBtn").addEventListener("click", async (event) => {

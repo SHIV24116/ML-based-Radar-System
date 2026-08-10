@@ -183,6 +183,51 @@ def add_live_prediction(prediction: dict[str, object]) -> None:
             }
 
 
+def has_csv_recordings(dataset: str) -> bool:
+    return len(list_recordings(dataset)) > 0
+
+
+def downsample_series(values: np.ndarray, limit: int = 160) -> list[float]:
+    if len(values) == 0:
+        return []
+    if len(values) <= limit:
+        selected = values
+    else:
+        indices = np.linspace(0, len(values) - 1, limit).astype(int)
+        selected = values[indices]
+    return [round(float(value), 6) for value in selected]
+
+
+def signal_graph_payload(filtered: np.ndarray, fs: float) -> dict[str, object]:
+    freqs, magnitude = compute_fft(filtered, fs=fs)
+    fft_mask = (freqs >= 0.0) & (freqs <= 500.0)
+    selected_freqs = freqs[fft_mask]
+    selected_mag = magnitude[fft_mask]
+    if len(selected_freqs) > 140:
+        indices = np.linspace(0, len(selected_freqs) - 1, 140).astype(int)
+        selected_freqs = selected_freqs[indices]
+        selected_mag = selected_mag[indices]
+
+    return {
+        "motion_signature": downsample_series(filtered[-min(len(filtered), int(fs)) :]),
+        "fft": {
+            "freq_hz": [round(float(value), 3) for value in selected_freqs],
+            "magnitude": [round(float(value), 6) for value in selected_mag],
+        },
+    }
+
+
+def infer_motion_type(label: str, radar_speed_mps: float) -> str:
+    normalized = label.lower()
+    if radar_speed_mps < 0.03 or normalized == "background":
+        return "Stationary / no object"
+    if normalized == "fan":
+        return "Periodic rotating motion"
+    if normalized in {"human", "pet", "dog", "vehicle"}:
+        return "Translational movement"
+    return "Moving object"
+
+
 def parse_serial_telemetry(line: str) -> dict[str, object] | None:
     if "=" not in line:
         return None
@@ -195,6 +240,8 @@ def parse_serial_telemetry(line: str) -> dict[str, object] | None:
         "speed_mps": "ultrasonic_speed_mps",
         "ultrasonic_speed_mps": "ultrasonic_speed_mps",
         "motion": "motion",
+        "direction": "direction",
+        "motion_type": "motion_type",
         "presence": "presence",
     }
     for part in line.split(","):
@@ -216,7 +263,9 @@ def parse_serial_telemetry(line: str) -> dict[str, object] | None:
     if "class" not in parsed and "distance_m" not in parsed:
         return None
     parsed.setdefault("presence", parsed.get("distance_m") is not None)
-    parsed.setdefault("motion", "Unknown")
+    parsed.setdefault("direction", parsed.get("motion", "Unknown"))
+    parsed.setdefault("motion", parsed.get("direction", "Unknown"))
+    parsed.setdefault("motion_type", infer_motion_type(str(parsed.get("class", "")), 0.0))
     return parsed
 
 
@@ -252,14 +301,18 @@ def predict_adc_window(samples: list[int], bundle: dict[str, object], fs: float)
     label = str(model.predict(frame)[0])
     confidence = float(np.max(model.predict_proba(frame))) if hasattr(model, "predict_proba") else 0.0
     motion = estimate_motion_metrics(filtered, fs=fs)
+    radar_speed = float(motion["radar_speed_mps"])
 
-    return {
+    prediction = {
         "time": datetime.now().isoformat(timespec="seconds"),
         "class": label,
         "confidence": round(confidence, 3),
-        "speed_mps": round(float(motion["radar_speed_mps"]), 3),
-        "motion": "ultrasonic-runtime",
+        "radar_speed_mps": round(radar_speed, 3),
+        "dominant_hz": round(float(motion["dominant_hz"]), 3),
+        "motion_type": infer_motion_type(label, radar_speed),
     }
+    prediction.update(signal_graph_payload(filtered, fs))
+    return prediction
 
 
 def run_serial_live(payload: dict[str, object], bundle: dict[str, object]) -> None:
@@ -316,7 +369,9 @@ def run_simulated_live(payload: dict[str, object], bundle: dict[str, object]) ->
         start = 0 if len(adc_samples) == window_size else int((index * 733) % (len(adc_samples) - window_size))
         window = adc_samples[start : start + window_size]
         prediction = predict_adc_window(window, bundle, fs)
-        prediction.update(simulated_ultrasonic_snapshot(index, str(recording["label"])))
+        ultrasonic = simulated_ultrasonic_snapshot(index, str(recording["label"]))
+        prediction.update(ultrasonic)
+        prediction["direction"] = ultrasonic["motion"]
         prediction["source"] = recording["path"]
         add_live_prediction(prediction)
         set_live_state(samples_seen=int(get_live_state().get("samples_seen", 0)) + len(window))
@@ -427,6 +482,19 @@ def run_model_comparison(payload: dict[str, object]) -> dict[str, object]:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+    if not has_csv_recordings(dataset):
+        summary = read_summary()
+        return {
+            "available": False,
+            "message": "Data not available",
+            "dataset": dataset,
+            "summary": summary,
+            "supervised": [],
+            "unsupervised": [],
+            "model": model_info(),
+            "plots": summary.get("plots", {}) if summary else {},
+        }
+
     feature_table = build_feature_table(dataset_root, fs=fs)
     feature_table.to_csv(OUTPUT_DIR / "feature_table.csv", index=False)
 
@@ -516,29 +584,41 @@ def record_from_serial(payload: dict[str, object]) -> dict[str, object]:
     port = str(payload.get("port", "COM5"))
     baud = int(payload.get("baud", 115200))
     label = str(payload.get("label", "human")).lower().strip()
-    seconds = float(payload.get("seconds", 10.0))
+    seconds = float(payload.get("seconds", 20.0))
     out_dir = safe_relative_path(str(payload.get("out_dir", "dataset")))
     label_dir = out_dir / label
     label_dir.mkdir(parents=True, exist_ok=True)
     output_path = label_dir / f"{label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 
-    rows: list[tuple[float, int, float]] = []
+    rows: list[tuple[float, int, float, object, object, object]] = []
     with serial.Serial(port, baud, timeout=1) as ser:
         time.sleep(2)
         ser.reset_input_buffer()
         start = time.perf_counter()
         while time.perf_counter() - start < seconds:
             line = ser.readline().decode(errors="ignore").strip()
+            telemetry = parse_serial_telemetry(line)
+            if telemetry:
+                timestamp_s = time.perf_counter() - start
+                rows.append((
+                    timestamp_s,
+                    -1,
+                    np.nan,
+                    telemetry.get("distance_m"),
+                    telemetry.get("ultrasonic_speed_mps"),
+                    telemetry.get("motion"),
+                ))
+                continue
             if not line.isdigit():
                 continue
             timestamp_s = time.perf_counter() - start
             adc = int(line)
             voltage = adc * (3.3 / 4095)
-            rows.append((timestamp_s, adc, voltage))
+            rows.append((timestamp_s, adc, voltage, None, None, None))
 
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["time_s", "adc", "voltage"])
+        writer.writerow(["time_s", "adc", "voltage", "distance_m", "ultrasonic_speed_mps", "motion"])
         writer.writerows(rows)
 
     return {
@@ -632,6 +712,9 @@ class RadarDashboardHandler(SimpleHTTPRequestHandler):
 
         try:
             result = action(self.read_json())
+        except SystemExit as exc:
+            self.send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
