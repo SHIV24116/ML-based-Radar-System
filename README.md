@@ -82,15 +82,6 @@ PR project/
   requirements.txt                Python dependencies
 ```
 
-Keep the `docs/` folder. It is useful for final submission because it separates the report-style material from the runnable source code:
-
-- `docs/software_architecture.md`
-- `docs/Dataset_Guide.md`
-- `docs/ML_Model_Report.md`
-- `docs/User_Manual.md`
-- `docs/project_notes.md`
-- `docs/model_strategy.md`
-
 ## Python Setup
 
 ```powershell
@@ -204,49 +195,6 @@ Install these libraries:
 - Wire
 
 Runtime constants are configured in `Firmware/Config.h`.
-
-## What To Upload To GitHub
-
-Upload source code, docs, placeholders, and README assets:
-
-```text
-.gitignore
-README.md
-requirements.txt
-project_structure.txt
-assets/
-Data Collection/
-dataset/README.md
-dataset/*/.gitkeep
-docs/
-DSP/
-ESP32 codes/
-Firmware/
-ML/
-models/.gitkeep
-outputs/*/.gitkeep
-Simulation/
-tools/
-zz_web_dashboard/
-circuit_diagram.py
-```
-
-Do not upload generated/local files:
-
-```text
-dataset/*.csv
-dataset_simulated/
-models/*.pkl
-outputs/model_comparison/
-outputs/**/*.csv
-outputs/**/*.png
-__pycache__/
-.venv/
-.vscode/
-111ULTRASONIC/
-```
-
-The `.gitignore` is configured for this.
 
 ## Final Design Rules
 
